@@ -1,0 +1,232 @@
+
+CREATE DATABASE Steam;
+GO
+
+USE Steam;
+GO
+
+CREATE TABLE Users (
+    user_id INT IDENTITY(1,1) PRIMARY KEY,
+    username NVARCHAR(50) NOT NULL UNIQUE,
+    email NVARCHAR(255) NOT NULL UNIQUE,
+    password NVARCHAR(255) NOT NULL,
+    date_created DATETIME2 NOT NULL DEFAULT GETDATE(),
+    last_login DATETIME2 NULL,
+    country NVARCHAR(100) NULL,
+    wallet_balance DECIMAL(10,2) NOT NULL DEFAULT 0.00
+);
+
+CREATE TABLE Developer (
+    developer_id INT IDENTITY(1,1) PRIMARY KEY,
+    name NVARCHAR(255) NOT NULL
+);
+
+CREATE TABLE Game (
+    game_id INT IDENTITY(1,1) PRIMARY KEY,
+    title NVARCHAR(255) NOT NULL,
+    description NVARCHAR(MAX) NULL,
+    release_date DATE NULL,
+    base_price DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+    developer_id INT NOT NULL,
+    CONSTRAINT FK_Game_Developer FOREIGN KEY (developer_id) REFERENCES Developer(developer_id)
+);
+
+CREATE TABLE Genre (
+    genre_id INT IDENTITY(1,1) PRIMARY KEY,
+    name NVARCHAR(100) NOT NULL UNIQUE
+);
+
+CREATE TABLE Achievement (
+    achievement_id INT IDENTITY(1,1) PRIMARY KEY,
+    game_id INT NOT NULL,
+    name NVARCHAR(255) NOT NULL,
+    description NVARCHAR(MAX) NULL,
+    icon_url NVARCHAR(500) NULL,
+    CONSTRAINT FK_Achievement_Game FOREIGN KEY (game_id) REFERENCES Game(game_id)
+);
+
+CREATE TABLE Review (
+    review_id INT IDENTITY(1,1) PRIMARY KEY,
+    user_id INT NOT NULL,
+    game_id INT NOT NULL,
+    rating INT NOT NULL CHECK (rating >= 1 AND rating <= 5),
+    comment NVARCHAR(MAX) NULL,
+    date_posted DATETIME2 NOT NULL DEFAULT GETDATE(),
+    is_helpful BIT NOT NULL DEFAULT 0,
+    CONSTRAINT FK_Review_User FOREIGN KEY (user_id) REFERENCES Users(user_id),
+    CONSTRAINT FK_Review_Game FOREIGN KEY (game_id) REFERENCES Game(game_id)
+);
+
+CREATE TABLE user_game (
+    user_id INT NOT NULL,
+    game_id INT NOT NULL,
+    purchase_date DATETIME2 NOT NULL DEFAULT GETDATE(),
+    playtime_hours DECIMAL(8,2) NOT NULL DEFAULT 0.00,
+    last_played DATETIME2 NULL,
+    PRIMARY KEY (user_id, game_id),
+    CONSTRAINT FK_user_game_User FOREIGN KEY (user_id) REFERENCES Users(user_id),
+    CONSTRAINT FK_user_game_Game FOREIGN KEY (game_id) REFERENCES Game(game_id)
+);
+
+CREATE TABLE game_genre (
+    game_id INT NOT NULL,
+    genre_id INT NOT NULL,
+    PRIMARY KEY (game_id, genre_id),
+    CONSTRAINT FK_game_genre_Game FOREIGN KEY (game_id) REFERENCES Game(game_id),
+    CONSTRAINT FK_game_genre_Genre FOREIGN KEY (genre_id) REFERENCES Genre(genre_id)
+);
+
+CREATE TABLE friendship (
+    user1_id INT NOT NULL,
+    user2_id INT NOT NULL,
+    friendship_since DATETIME2 NOT NULL DEFAULT GETDATE(),
+    status NVARCHAR(20) NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'blocked', 'pending')),
+    PRIMARY KEY (user1_id, user2_id),
+    CONSTRAINT FK_friendship_User1 FOREIGN KEY (user1_id) REFERENCES Users(user_id),
+    CONSTRAINT FK_friendship_User2 FOREIGN KEY (user2_id) REFERENCES Users(user_id),
+    CONSTRAINT CHK_different_users CHECK (user1_id <> user2_id)
+);
+INSERT INTO Developer(name) VALUES
+('itaque'), ('illum'), ('commodi'), ('pariatur'), ('sunt'), ('omnis'), ('animi'), ('nostrum'), ('fugit'),
+('nihil'), ('ut'), ('rerum'), ('pariatur'), ('quod'), ('voluptatibus'), ('harum'), ('et'), ('dolorum'),
+('eveniet'), ('distinctio'), ('maxime'), ('qui'), ('autem'), ('quo'), ('ipsa'), ('est'), ('unde'), ('blanditiis'),
+('porro'), ('quas'), ('iste'), ('dolorum'), ('itaque'), ('quas'), ('ipsam'), ('culpa'), ('exercitationem'),
+('commodi'), ('sit'), ('iusto'), ('voluptate'), ('unde'), ('distinctio'), ('veniam'), ('enim'), ('sed'),
+('veniam'), ('nesciunt'), ('ut'), ('provident'), ('ea'), ('atque'), ('vitae'), ('vel'), ('dignissimos'),
+('dolorem'), ('delectus'), ('laborum'), ('nihil'), ('nihil'), ('atque'), ('ut'), ('necessitatibus'),
+('et'), ('veniam'), ('aspernatur'), ('alias'), ('vel'), ('deleniti'), ('labore'), ('iste'), ('ut'),
+('maxime'), ('repellendus'), ('asperiores'), ('excepturi'), ('eius'), ('hic'), ('neque'), ('fugit'), ('aut'),
+('est'), ('est'), ('ullam'), ('non'), ('neque'), ('sunt'), ('inventore'), ('voluptatem'), ('pariatur'),
+('modi'), ('blanditiis'), ('et'), ('accusamus'), ('eos'), ('omnis'), ('quibusdam'), ('omnis'), ('fugiat'), ('et');
+
+
+CREATE PROCEDURE PurchaseGame
+    @user_id INT,
+    @game_id INT,
+    @success BIT OUTPUT,
+    @message NVARCHAR(255) OUTPUT
+AS
+BEGIN
+    SET NOCOUNT ON;
+    BEGIN TRY
+        BEGIN TRANSACTION;
+        
+        DECLARE @game_price DECIMAL(10,2);
+        DECLARE @user_balance DECIMAL(10,2);
+        DECLARE @already_owns BIT = 0;
+        
+        IF EXISTS (SELECT 1 FROM user_game WHERE user_id = @user_id AND game_id = @game_id)
+        BEGIN
+            SET @already_owns = 1;
+            SET @success = 0;
+            SET @message = 'User already owns this game.';
+            ROLLBACK TRANSACTION;
+            RETURN;
+        END;
+        
+        SELECT @game_price = base_price FROM Game WHERE game_id = @game_id;
+        SELECT @user_balance = wallet_balance FROM Users WHERE user_id = @user_id;
+        
+        IF @user_balance >= @game_price
+        BEGIN
+  
+            UPDATE Users 
+            SET wallet_balance = wallet_balance - @game_price 
+            WHERE user_id = @user_id;
+            
+            
+            INSERT INTO user_game (user_id, game_id, purchase_date)
+            VALUES (@user_id, @game_id, GETDATE());
+            
+            SET @success = 1;
+            SET @message = 'Game purchased successfully!';
+            COMMIT TRANSACTION;
+        END
+        ELSE
+        BEGIN
+            SET @success = 0;
+            SET @message = 'Insufficient funds in wallet.';
+            ROLLBACK TRANSACTION;
+        END;
+    END TRY
+    BEGIN CATCH
+        SET @success = 0;
+        SET @message = ERROR_MESSAGE();
+        ROLLBACK TRANSACTION;
+    END CATCH;
+END;
+GO
+
+
+CREATE FUNCTION GetUserGameCount(@user_id INT)
+RETURNS INT
+AS
+BEGIN
+    DECLARE @game_count INT;
+    
+    SELECT @game_count = COUNT(*)
+    FROM user_game
+    WHERE user_id = @user_id;
+    
+    RETURN ISNULL(@game_count, 0);
+END;
+GO
+
+CREATE TRIGGER UpdateLastPlayed
+ON user_game
+AFTER UPDATE
+AS
+BEGIN
+    SET NOCOUNT ON;
+    
+ 
+    IF UPDATE(playtime_hours)
+    BEGIN
+        UPDATE ug
+        SET last_played = GETDATE()
+        FROM user_game ug
+        INNER JOIN inserted i ON ug.user_id = i.user_id AND ug.game_id = i.game_id;
+    END;
+END;
+GO 
+
+SELECT user_id, username, wallet_balance FROM Users WHERE user_id = 1;
+SELECT * FROM user_game WHERE user_id = 1;
+
+DECLARE @success BIT, @message NVARCHAR(255);
+
+EXEC PurchaseGame 
+    @user_id = 1, 
+    @game_id = 3, 
+    @success = @success OUTPUT, 
+    @message = @message OUTPUT;
+
+SELECT @success AS Success, @message AS Message;
+
+SELECT user_id, username, wallet_balance FROM Users WHERE user_id = 1;
+SELECT * FROM user_game WHERE user_id = 1;
+
+
+INSERT INTO Genre (name) VALUES 
+('Action'),
+('Adventure'),
+('RPG'),
+('Strategy'),
+('Simulation');
+
+INSERT INTO Users (username, email, password, country, wallet_balance) VALUES 
+('john_doe', 'john@example.com', 'pass123', 'USA', 200.00),
+('jane_smith', 'jane@example.com', 'pass456', 'Canada', 150.00),
+('mike_wilson', 'mike@example.com', 'pass789', 'UK', 100.00);
+
+INSERT INTO Game (title, description, release_date, base_price, developer_id) VALUES 
+('Cyberpunk 2077', 'Open-world RPG set in Night City', '2020-12-10', 59.99, 2),
+('Grand Theft Auto V', 'Action-adventure game in Los Santos', '2013-09-17', 29.99, 3),
+('The Witcher 3', 'Fantasy RPG as Geralt of Rivia', '2015-05-19', 39.99, 2),
+('Assassin''s Creed Valhalla', 'Action RPG in Viking era', '2020-11-10', 59.99, 4);
+
+INSERT INTO user_game (user_id, game_id, playtime_hours) VALUES 
+(1, 1, 45.5),
+(1, 2, 120.25),
+(2, 3, 85.75);
+GO
